@@ -296,13 +296,15 @@ def render_heatmap(matrix: pd.DataFrame):
         style = f"background-color: {bg}; color: white; font-weight: 800; font-size: 13px"
         return style
 
-    # Apply different styling to 52W Return% vs weekly columns
-    styled = (
-        matrix.style
-        .applymap(color_cell, subset=[c for c in matrix.columns if c.startswith("W")])
-        .applymap(color_cumulative, subset=["52W Return%"])
-        .format("{:+.2f}%", na_rep="—")
-    )
+    # Single styling function — pandas 2.x compatible (use .map not .applymap)
+    def style_all(val, col_name):
+        if col_name == "52W Return%":
+            return color_cumulative(val)
+        return color_cell(val)
+
+    styled = matrix.style.apply(
+        lambda col: [style_all(v, col.name) for v in col], axis=0
+    ).format("{:+.2f}%", na_rep="—")
     st.dataframe(styled, use_container_width=True, height=500)
 
 
@@ -379,7 +381,7 @@ def render_category_tab(tab, category: str):
         bw = get_best_worst_per_week(matrix)
         if not bw.empty:
             st.dataframe(
-                bw.style.applymap(
+                bw.style.map(
                     lambda v: "color:#00cc66;font-weight:bold" if isinstance(v, float) and v > 0
                     else ("color:#ff4444;font-weight:bold" if isinstance(v, float) and v < 0 else ""),
                     subset=["Best %", "Worst %"],
@@ -435,7 +437,7 @@ with tab_signals:
             def style_mom(val):
                 m = {"STRONG": "#00ff88", "RISING": "#88ff44", "FADING": "#ffaa00", "WEAK": "#ff4444"}
                 return f"color:{m[val]};font-weight:bold" if val in m else ""
-            st.dataframe(mom.style.applymap(style_mom, subset=["Momentum"]),
+            st.dataframe(mom.style.map(style_mom, subset=["Momentum"]),
                          use_container_width=True, height=600)
 
     with sig2:
@@ -443,7 +445,7 @@ with tab_signals:
         rot = compute_sector_rotation(full_matrix)
         if not rot.empty:
             st.dataframe(
-                rot.style.applymap(
+                rot.style.map(
                     lambda v: "color:#00cc66" if isinstance(v, float) and v > 0
                     else ("color:#ff4444" if isinstance(v, float) and v < 0 else ""),
                     subset=["Flow_Delta"],
@@ -459,7 +461,7 @@ with tab_signals:
                 m = {"BREAKOUT": "color:#00ff88;font-weight:bold", "Near High": "color:#88ff44",
                      "Deep Correction": "color:#ff4444;font-weight:bold", "Neutral": "color:#aaaaaa"}
                 return m.get(str(val), "color:#aaaaaa")
-            st.dataframe(bo.style.applymap(style_bo, subset=["Signal"]),
+            st.dataframe(bo.style.map(style_bo, subset=["Signal"]),
                          use_container_width=True, height=600)
 
     with sig4:
@@ -470,7 +472,7 @@ with tab_signals:
                 m = {"HIGH RISK": "color:#ff2222;font-weight:bold", "WATCH": "color:#ff8800;font-weight:bold",
                      "CAUTION": "color:#ffcc00", "OK": "color:#00cc66"}
                 return m.get(str(val), "")
-            st.dataframe(weak.style.applymap(style_weak, subset=["Weakness"]),
+            st.dataframe(weak.style.map(style_weak, subset=["Weakness"]),
                          use_container_width=True, height=600)
 
     # Signal Summary Board
