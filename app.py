@@ -275,15 +275,34 @@ def render_heatmap(matrix: pd.DataFrame):
     def color_cell(val):
         if pd.isna(val):
             return "background-color: #2a2a3e; color: #666"
-        if   val >  2: bg = "#006600"
-        elif val >  1: bg = "#008800"
-        elif val >  0: bg = "#00aa44"
-        elif val > -1: bg = "#cc2200"
-        elif val > -2: bg = "#aa0000"
-        else:          bg = "#880000"
+        if   val >  10: bg = "#004400"
+        elif val >   2: bg = "#006600"
+        elif val >   1: bg = "#008800"
+        elif val >   0: bg = "#00aa44"
+        elif val >  -1: bg = "#cc2200"
+        elif val >  -2: bg = "#aa0000"
+        else:           bg = "#880000"
         return f"background-color: {bg}; color: white; font-weight: 600"
 
-    styled = matrix.style.applymap(color_cell).format("{:+.2f}%", na_rep="—")
+    def color_cumulative(val):
+        """Stronger color scale for the 52W Return% column."""
+        if pd.isna(val):
+            return "background-color: #2a2a3e; color: #666"
+        if   val >  30: bg = "#003300"; border = "3px solid #00ff88"
+        elif val >  15: bg = "#005500"; border = "2px solid #00cc66"
+        elif val >   0: bg = "#007700"; border = ""
+        elif val > -15: bg = "#aa0000"; border = ""
+        else:           bg = "#660000"; border = "2px solid #ff4444"
+        style = f"background-color: {bg}; color: white; font-weight: 800; font-size: 13px"
+        return style
+
+    # Apply different styling to 52W Return% vs weekly columns
+    styled = (
+        matrix.style
+        .applymap(color_cell, subset=[c for c in matrix.columns if c.startswith("W")])
+        .applymap(color_cumulative, subset=["52W Return%"])
+        .format("{:+.2f}%", na_rep="—")
+    )
     st.dataframe(styled, use_container_width=True, height=500)
 
 
@@ -414,10 +433,8 @@ with tab_signals:
         mom = compute_momentum_signal(full_matrix)
         if not mom.empty:
             def style_mom(val):
-                colors = {"STRONG": "#00ff88", "RISING": "#88ff44", "FADING": "#ffaa00", "WEAK": "#ff4444"}
-                for k, c in colors.items():
-                    if k in str(val): return f"color:{c};font-weight:bold"
-                return ""
+                m = {"STRONG": "#00ff88", "RISING": "#88ff44", "FADING": "#ffaa00", "WEAK": "#ff4444"}
+                return f"color:{m[val]};font-weight:bold" if val in m else ""
             st.dataframe(mom.style.applymap(style_mom, subset=["Momentum"]),
                          use_container_width=True, height=600)
 
@@ -429,7 +446,7 @@ with tab_signals:
                 rot.style.applymap(
                     lambda v: "color:#00cc66" if isinstance(v, float) and v > 0
                     else ("color:#ff4444" if isinstance(v, float) and v < 0 else ""),
-                    subset=["Δ Flow"],
+                    subset=["Flow_Delta"],
                 ),
                 use_container_width=True, height=600,
             )
@@ -439,10 +456,9 @@ with tab_signals:
         bo = compute_breakout_signal(all_data, all_cat_indices)
         if not bo.empty:
             def style_bo(val):
-                if "BREAKOUT" in str(val): return "color:#00ff88;font-weight:bold"
-                if "Near"     in str(val): return "color:#88ff44"
-                if "Deep"     in str(val): return "color:#ff4444;font-weight:bold"
-                return "color:#aaaaaa"
+                m = {"BREAKOUT": "color:#00ff88;font-weight:bold", "Near High": "color:#88ff44",
+                     "Deep Correction": "color:#ff4444;font-weight:bold", "Neutral": "color:#aaaaaa"}
+                return m.get(str(val), "color:#aaaaaa")
             st.dataframe(bo.style.applymap(style_bo, subset=["Signal"]),
                          use_container_width=True, height=600)
 
@@ -451,11 +467,9 @@ with tab_signals:
         weak = compute_weakness_signal(full_matrix)
         if not weak.empty:
             def style_weak(val):
-                if "HIGH RISK" in str(val): return "color:#ff2222;font-weight:bold"
-                if "WATCH"     in str(val): return "color:#ff8800;font-weight:bold"
-                if "CAUTION"   in str(val): return "color:#ffcc00"
-                if "OK"        in str(val): return "color:#00cc66"
-                return ""
+                m = {"HIGH RISK": "color:#ff2222;font-weight:bold", "WATCH": "color:#ff8800;font-weight:bold",
+                     "CAUTION": "color:#ffcc00", "OK": "color:#00cc66"}
+                return m.get(str(val), "")
             st.dataframe(weak.style.applymap(style_weak, subset=["Weakness"]),
                          use_container_width=True, height=600)
 
@@ -471,20 +485,20 @@ with tab_signals:
 
     with c1:
         st.markdown("**🔥 Top Momentum**")
-        for x in mom_df[mom_df["Momentum"].str.contains("STRONG")]["Index"].tolist()[:5]:
+        for x in mom_df[mom_df["Momentum"] == "STRONG"]["Index"].tolist()[:5]:
             st.success(x)
 
     with c2:
         st.markdown("**🟢 Strong Inflow**")
-        for x in rot_df[rot_df["Rotation"].str.contains("Strong Inflow")]["Index"].tolist()[:5]:
+        for x in rot_df[rot_df["Rotation"] == "Strong Inflow"]["Index"].tolist()[:5]:
             st.success(x)
 
     with c3:
         st.markdown("**⚡ Breakouts**")
-        for x in bo_df[bo_df["Signal"].str.contains("BREAKOUT")]["Index"].tolist()[:5]:
+        for x in bo_df[bo_df["Signal"] == "BREAKOUT"]["Index"].tolist()[:5]:
             st.info(x)
 
     with c4:
         st.markdown("**🚨 High Risk**")
-        for x in weak_df[weak_df["Weakness"].str.contains("HIGH RISK")]["Index"].tolist()[:5]:
+        for x in weak_df[weak_df["Weakness"] == "HIGH RISK"]["Index"].tolist()[:5]:
             st.error(x)
