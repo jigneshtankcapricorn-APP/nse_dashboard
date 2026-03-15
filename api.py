@@ -1,42 +1,82 @@
 # ============================================================
 # api.py — Angel One SmartAPI Login + Historical Data Fetch
+# Uses direct HTTP requests (no SmartAPI SDK) for Python 3.14 compatibility
 # ============================================================
 
 import pyotp
+import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from SmartApi import SmartConnect
+
+BASE_URL = "https://apiconnect.angelbroking.com"
+
+LOGIN_URL  = f"{BASE_URL}/rest/auth/angelbroking/user/v1/loginByPassword"
+CANDLE_URL = f"{BASE_URL}/rest/secure/angelbroking/historical/v1/getCandleData"
 
 
-def login_angel(api_key: str, client_id: str, password: str, totp_secret: str):
+def login_angel(api_key: str, client_id: str, password: str, totp_secret: str) -> dict:
     """
-    Login to Angel One SmartAPI.
-    Returns (obj, auth_token) on success, raises Exception on failure.
+    Login to Angel One via direct REST API.
+    Returns session dict with jwt_token, refresh_token, feed_token.
+    Raises Exception on failure.
     """
-    obj = SmartConnect(api_key=api_key)
     totp = pyotp.TOTP(totp_secret).now()
-    data = obj.generateSession(client_id, password, totp)
 
-    if not data or data.get("status") is False:
-        msg = data.get("message", "Login failed") if data else "No response from API"
-        raise Exception(f"Angel One Login Failed: {msg}")
+    headers = {
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
+        "X-UserType":    "USER",
+        "X-SourceID":    "WEB",
+        "X-ClientLocalIP": "127.0.0.1",
+        "X-ClientPublicIP": "127.0.0.1",
+        "X-MACAddress":  "00:00:00:00:00:00",
+        "X-PrivateKey":  api_key,
+    }
 
-    return obj
+    payload = {
+        "clientcode": client_id,
+        "password":   password,
+        "totp":       totp,
+    }
+
+    resp = requests.post(LOGIN_URL, json=payload, headers=headers, timeout=15)
+
+    if resp.status_code != 200:
+        raise Exception(f"Login HTTP error {resp.status_code}: {resp.text}")
+
+    data = resp.json()
+    if not data.get("status"):
+        raise Exception(f"Angel One Login Failed: {data.get('message', 'Unknown error')}")
+
+    session = data.get("data", {})
+    session["api_key"] = api_key   # carry api_key for subsequent calls
+    return session
 
 
-def fetch_weekly_data(obj: SmartConnect, token: str, weeks: int = 52) -> pd.DataFrame:
+def fetch_weekly_data(session: dict, token: str, weeks: int = 52) -> pd.DataFrame:
     """
     Fetch daily OHLC for the last `weeks` weeks for a given index token.
-    Returns a DataFrame with columns: [date, open, high, low, close, volume]
-    Resampled to weekly (Friday close).
+    Resampled to weekly (Friday close) with weekly % change.
     """
     end_date   = datetime.now()
-    start_date = end_date - timedelta(weeks=weeks + 2)  # +2 buffer for weekends
+    start_date = end_date - timedelta(weeks=weeks + 2)  # +2 buffer for weekends/holidays
 
     from_str = start_date.strftime("%Y-%m-%d 09:00")
     to_str   = end_date.strftime("%Y-%m-%d 15:30")
 
-    params = {
+    headers = {
+        "Content-Type":    "application/json",
+        "Accept":          "application/json",
+        "X-UserType":      "USER",
+        "X-SourceID":      "WEB",
+        "X-ClientLocalIP": "127.0.0.1",
+        "X-ClientPublicIP":"127.0.0.1",
+        "X-MACAddress":    "00:00:00:00:00:00",
+        "X-PrivateKey":    session["api_key"],
+        "Authorization":   f"Bearer {session['jwtToken']}",
+    }
+
+    payload = {
         "exchange":    "NSE",
         "symboltoken": token,
         "interval":    "ONE_DAY",
@@ -44,15 +84,16 @@ def fetch_weekly_data(obj: SmartConnect, token: str, weeks: int = 52) -> pd.Data
         "todate":      to_str,
     }
 
-    try:
-        resp = obj.getCandleData(params)
-    except Exception as e:
-        raise Exception(f"API call failed for token {token}: {e}")
+    resp = requests.post(CANDLE_URL, json=payload, headers=headers, timeout=20)
 
-    if not resp or resp.get("status") is False:
-        raise Exception(f"No data returned for token {token}: {resp.get('message', '')}")
+    if resp.status_code != 200:
+        raise Exception(f"HTTP {resp.status_code} for token {token}: {resp.text}")
 
-    raw = resp.get("data", [])
+    data = resp.json()
+    if not data.get("status"):
+        raise Exception(f"No data for token {token}: {data.get('message', '')}")
+
+    raw = data.get("data", [])
     if not raw:
         return pd.DataFrame()
 
@@ -61,20 +102,15 @@ def fetch_weekly_data(obj: SmartConnect, token: str, weeks: int = 52) -> pd.Data
     df.set_index("datetime", inplace=True)
     df = df[["open", "high", "low", "close", "volume"]].astype(float)
 
-    # Resample to weekly using Friday as week-end
-    weekly = df["close"].resample("W-FRI").last().dropna()
-
-    # Calculate weekly % change
+    # Resample to weekly (Friday close)
+    weekly     = df["close"].resample("W-FRI").last().dropna()
     weekly_pct = weekly.pct_change() * 100
-    weekly_pct = weekly_pct.dropna()
-
-    # Keep only last `weeks` weeks
-    weekly_pct = weekly_pct.tail(weeks)
+    weekly_pct = weekly_pct.dropna().tail(weeks)
 
     result = pd.DataFrame({
-        "week_end":    weekly_pct.index,
-        "close":       weekly.reindex(weekly_pct.index).values,
-        "weekly_pct":  weekly_pct.values,
+        "week_end":   weekly_pct.index,
+        "close":      weekly.reindex(weekly_pct.index).values,
+        "weekly_pct": weekly_pct.values,
     })
     result.reset_index(drop=True, inplace=True)
     result["week_num"] = range(1, len(result) + 1)

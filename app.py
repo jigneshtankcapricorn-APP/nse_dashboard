@@ -91,7 +91,7 @@ if refresh_btn:
     else:
         with st.spinner("🔐 Logging in to Angel One..."):
             try:
-                obj = login_angel(api_key, client_id, password, totp_secret)
+                session = login_angel(api_key, client_id, password, totp_secret)
                 st.sidebar.success("✅ Logged in!")
             except Exception as e:
                 st.sidebar.error(f"Login failed: {e}")
@@ -110,7 +110,7 @@ if refresh_btn:
             name  = idx["name"]
             token = idx["token"]
             try:
-                df = fetch_weekly_data(obj, token, weeks=52)
+                df = fetch_weekly_data(session, token, weeks=52)
                 all_data[name] = df
             except Exception as e:
                 all_data[name] = pd.DataFrame()
