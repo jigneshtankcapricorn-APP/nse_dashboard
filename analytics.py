@@ -28,6 +28,8 @@ def build_heatmap_matrix(all_data: dict, category_indices: list) -> pd.DataFrame
 
     matrix = pd.DataFrame(frames).T
     matrix.columns = [f"W{int(c)}" for c in matrix.columns]
+    # Reverse: newest week (W52) on left, oldest (W1) on right
+    matrix = matrix[matrix.columns[::-1]]
     return matrix.round(2)
 
 

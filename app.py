@@ -66,22 +66,24 @@ st.markdown("""
 # ─────────────────────────────────────────────
 # SESSION STATE INIT
 # ─────────────────────────────────────────────
-if "logged_in" not in st.session_state: st.session_state.logged_in = False
-if "session"   not in st.session_state: st.session_state.session   = None
-if "all_data"  not in st.session_state: st.session_state.all_data  = {}
+if "logged_in"  not in st.session_state: st.session_state.logged_in  = False
+if "app_authed" not in st.session_state: st.session_state.app_authed = False
+if "session"    not in st.session_state: st.session_state.session    = None
+if "all_data"   not in st.session_state: st.session_state.all_data   = {}
 
-# ─────────────────────────────────────────────
-# LOGIN PAGE
-# ─────────────────────────────────────────────
+# Hide sidebar on all login screens
 if not st.session_state.logged_in:
-
-    # Hide sidebar completely on login screen
     st.markdown("""
     <style>
-        [data-testid="stSidebar"]         { display: none !important; }
-        [data-testid="collapsedControl"]   { display: none !important; }
+        [data-testid="stSidebar"]        { display: none !important; }
+        [data-testid="collapsedControl"] { display: none !important; }
     </style>
     """, unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+# STEP 1 — App Username / Password Gate
+# ─────────────────────────────────────────────
+if not st.session_state.app_authed:
 
     _, center, _ = st.columns([1, 1.2, 1])
     with center:
@@ -98,7 +100,53 @@ if not st.session_state.logged_in:
 
         st.write("")
 
-        login_clicked = st.button(
+        username_input = st.text_input("Username", placeholder="Enter username")
+        password_input = st.text_input("Password", placeholder="Enter password", type="password")
+
+        st.write("")
+        auth_clicked = st.button("Login  →", use_container_width=True, type="primary")
+
+        st.markdown(
+            "<div class='login-badge'>🔒 Secured · NSE Index Dashboard</div>",
+            unsafe_allow_html=True,
+        )
+
+        if auth_clicked:
+            try:
+                valid_user = st.secrets["APP_USERNAME"]
+                valid_pass = st.secrets["APP_PASSWORD"]
+            except KeyError as e:
+                st.error(f"Missing secret: {e}. Add APP_USERNAME and APP_PASSWORD in Streamlit Secrets.")
+                st.stop()
+
+            if username_input == valid_user and password_input == valid_pass:
+                st.session_state.app_authed = True
+                st.rerun()
+            else:
+                st.error("Incorrect username or password.")
+
+    st.stop()
+
+# ─────────────────────────────────────────────
+# STEP 2 — Connect to Angel One
+# ─────────────────────────────────────────────
+if not st.session_state.logged_in:
+
+    _, center, _ = st.columns([1, 1.2, 1])
+    with center:
+        st.markdown("""
+        <div class="login-card">
+            <div class="login-logo">📊</div>
+            <div class="login-title">NSE Index Dashboard</div>
+            <div class="login-sub">
+                Authenticated ✅<br>Now connect your Angel One account to load live data.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.write("")
+
+        connect_clicked = st.button(
             "🔐  Connect to Angel One",
             use_container_width=True,
             type="primary",
@@ -109,15 +157,14 @@ if not st.session_state.logged_in:
             unsafe_allow_html=True,
         )
 
-        if login_clicked:
-            # Read from Streamlit secrets
+        if connect_clicked:
             try:
                 api_key     = st.secrets["API_KEY"]
                 client_id   = st.secrets["CLIENT_ID"]
                 password    = st.secrets["PASSWORD"]
                 totp_secret = st.secrets["TOTP_KEY"]
             except KeyError as e:
-                st.error(f"Missing secret key: {e}. Go to Streamlit Cloud → Settings → Secrets and add it.")
+                st.error(f"Missing secret key: {e}. Add it in Streamlit Cloud → Settings → Secrets.")
                 st.stop()
 
             with st.spinner("Connecting to Angel One..."):
