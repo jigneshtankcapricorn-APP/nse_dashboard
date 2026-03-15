@@ -10,8 +10,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 
-from tokens          import INDICES, FALLBACK_TOKENS
-from token_resolver  import fetch_and_resolve_tokens, get_token
+from tokens          import INDICES
 from api       import login_angel, fetch_weekly_data
 from cache     import save_cache, load_cache, get_last_updated, cache_exists
 from analytics import (
@@ -229,7 +228,6 @@ if refresh_btn:
 
     # Resolve correct tokens from ScripMaster
     resolve_placeholder = st.empty()
-    resolved = fetch_and_resolve_tokens(
         progress_cb=lambda msg: resolve_placeholder.info(f"🔍 {msg}")
     )
     st.session_state.resolved_tokens = resolved
@@ -237,7 +235,7 @@ if refresh_btn:
 
     for i, idx in enumerate(all_indices):
         name  = idx["name"]
-        token = get_token(name, resolved, FALLBACK_TOKENS)
+        token = idx["token"]
         if not token:
             errors.append(f"{name}: No token found")
             all_data[name] = pd.DataFrame()
