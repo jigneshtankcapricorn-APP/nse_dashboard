@@ -10,7 +10,8 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 
-from tokens    import INDICES
+from tokens          import INDICES, FALLBACK_TOKENS
+from token_resolver  import fetch_and_resolve_tokens, get_token
 from api       import login_angel, fetch_weekly_data
 from cache     import save_cache, load_cache, get_last_updated, cache_exists
 from analytics import (
@@ -66,7 +67,8 @@ st.markdown("""
 # ─────────────────────────────────────────────
 # SESSION STATE INIT
 # ─────────────────────────────────────────────
-if "logged_in"  not in st.session_state: st.session_state.logged_in  = False
+if "logged_in"       not in st.session_state: st.session_state.logged_in       = False
+if "resolved_tokens" not in st.session_state: st.session_state.resolved_tokens = {}
 if "app_authed" not in st.session_state: st.session_state.app_authed = False
 if "session"    not in st.session_state: st.session_state.session    = None
 if "all_data"   not in st.session_state: st.session_state.all_data   = {}
@@ -225,9 +227,21 @@ if refresh_btn:
     errors   = []
     total    = len(all_indices)
 
+    # Resolve correct tokens from ScripMaster
+    resolve_placeholder = st.empty()
+    resolved = fetch_and_resolve_tokens(
+        progress_cb=lambda msg: resolve_placeholder.info(f"🔍 {msg}")
+    )
+    st.session_state.resolved_tokens = resolved
+    resolve_placeholder.empty()
+
     for i, idx in enumerate(all_indices):
         name  = idx["name"]
-        token = idx["token"]
+        token = get_token(name, resolved, FALLBACK_TOKENS)
+        if not token:
+            errors.append(f"{name}: No token found")
+            all_data[name] = pd.DataFrame()
+            continue
         try:
             df = fetch_weekly_data(session, token, weeks=52)
             all_data[name] = df
@@ -296,15 +310,13 @@ def render_heatmap(matrix: pd.DataFrame):
         style = f"background-color: {bg}; color: white; font-weight: 800; font-size: 13px"
         return style
 
-    # Single styling function — pandas 2.x compatible (use .map not .applymap)
-    def style_all(val, col_name):
-        if col_name == "52W Return%":
-            return color_cumulative(val)
-        return color_cell(val)
+    # Use .apply(axis=0) — no subset arg, fully compatible with pandas 2.x / Python 3.14
+    def style_col(col):
+        if col.name == "52W Return%":
+            return [color_cumulative(v) for v in col]
+        return [color_cell(v) for v in col]
 
-    styled = matrix.style.apply(
-        lambda col: [style_all(v, col.name) for v in col], axis=0
-    ).format("{:+.2f}%", na_rep="—")
+    styled = matrix.style.apply(style_col, axis=0).format("{:+.2f}%", na_rep="—")
     st.dataframe(styled, use_container_width=True, height=500)
 
 
@@ -380,12 +392,14 @@ def render_category_tab(tab, category: str):
         st.subheader("🏆 Best & 💀 Worst Performer — Each Week")
         bw = get_best_worst_per_week(matrix)
         if not bw.empty:
+            def style_bw_col(col):
+                if col.name in ["Best %", "Worst %"]:
+                    return ["color:#00cc66;font-weight:bold" if isinstance(v, float) and v > 0
+                            else ("color:#ff4444;font-weight:bold" if isinstance(v, float) and v < 0 else "")
+                            for v in col]
+                return ["" for _ in col]
             st.dataframe(
-                bw.style.map(
-                    lambda v: "color:#00cc66;font-weight:bold" if isinstance(v, float) and v > 0
-                    else ("color:#ff4444;font-weight:bold" if isinstance(v, float) and v < 0 else ""),
-                    subset=["Best %", "Worst %"],
-                ),
+                bw.style.apply(style_bw_col, axis=0),
                 use_container_width=True, height=300,
             )
 
@@ -437,7 +451,11 @@ with tab_signals:
             def style_mom(val):
                 m = {"STRONG": "#00ff88", "RISING": "#88ff44", "FADING": "#ffaa00", "WEAK": "#ff4444"}
                 return f"color:{m[val]};font-weight:bold" if val in m else ""
-            st.dataframe(mom.style.map(style_mom, subset=["Momentum"]),
+            def apply_mom(col):
+                if col.name == "Momentum":
+                    return [style_mom(v) for v in col]
+                return ["" for _ in col]
+            st.dataframe(mom.style.apply(apply_mom, axis=0),
                          use_container_width=True, height=600)
 
     with sig2:
@@ -445,10 +463,12 @@ with tab_signals:
         rot = compute_sector_rotation(full_matrix)
         if not rot.empty:
             st.dataframe(
-                rot.style.map(
-                    lambda v: "color:#00cc66" if isinstance(v, float) and v > 0
-                    else ("color:#ff4444" if isinstance(v, float) and v < 0 else ""),
-                    subset=["Flow_Delta"],
+                rot.style.apply(
+                    lambda col: ["color:#00cc66" if isinstance(v, float) and v > 0
+                                 else ("color:#ff4444" if isinstance(v, float) and v < 0 else "")
+                                 for v in col]
+                    if col.name == "Flow_Delta" else ["" for _ in col],
+                    axis=0
                 ),
                 use_container_width=True, height=600,
             )
@@ -461,7 +481,11 @@ with tab_signals:
                 m = {"BREAKOUT": "color:#00ff88;font-weight:bold", "Near High": "color:#88ff44",
                      "Deep Correction": "color:#ff4444;font-weight:bold", "Neutral": "color:#aaaaaa"}
                 return m.get(str(val), "color:#aaaaaa")
-            st.dataframe(bo.style.map(style_bo, subset=["Signal"]),
+            def apply_bo(col):
+                if col.name == "Signal":
+                    return [style_bo(v) for v in col]
+                return ["" for _ in col]
+            st.dataframe(bo.style.apply(apply_bo, axis=0),
                          use_container_width=True, height=600)
 
     with sig4:
@@ -472,7 +496,11 @@ with tab_signals:
                 m = {"HIGH RISK": "color:#ff2222;font-weight:bold", "WATCH": "color:#ff8800;font-weight:bold",
                      "CAUTION": "color:#ffcc00", "OK": "color:#00cc66"}
                 return m.get(str(val), "")
-            st.dataframe(weak.style.map(style_weak, subset=["Weakness"]),
+            def apply_weak(col):
+                if col.name == "Weakness":
+                    return [style_weak(v) for v in col]
+                return ["" for _ in col]
+            st.dataframe(weak.style.apply(apply_weak, axis=0),
                          use_container_width=True, height=600)
 
     # Signal Summary Board
